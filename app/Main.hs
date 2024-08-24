@@ -41,10 +41,13 @@ idk :: Num a => (a ->  a) -> V2 a -> V2 a
 idk f (V2 x y) = (V2 (f x) (f y))
 
 
-covered, pressed, flagged, _qmark, _qmarkpressed, mine, blownup, _xmine :: Rectangle CInt
 -- coords in assets sheet
+covered, pressed, flagged, _qmark, _qmarkpressed, mine, blownup, _xmine :: Rectangle CInt
 covered:pressed:flagged:_qmark:_qmarkpressed:mine:blownup:_xmine:_  = 
     map (\x -> Rectangle (P (V2 (14 + x) 195)) (V2 15 15)) [0,17..]
+
+leftBar :: Rectangle CInt
+leftBar = Rectangle (P (V2 475 431)) (V2 11 16)
 
 numbers :: Array CInt (Rectangle CInt)
 numbers = array (0, 8) $ [(0, pressed)] ++ numbered
@@ -65,11 +68,16 @@ drawTile renderer texture (i, j, tile) = do
     copy renderer texture (Just $ pickTileRect tile) 
                           (Just (Rectangle (P (V2 x y)) (V2 dim dim)))
     where dim = 60
-          (x, y) = (i * dim, j * dim)
+          (x, y) = (44 + i * dim, dim + j * dim)
 
 renderGrid :: Renderer -> Hrm ()
 renderGrid renderer = do
     (grid, texture) <- get
+    copy renderer texture (Just leftBar) 
+                          (Just (Rectangle (P (V2 0 0)) (V2 44 60)))
+    copy renderer texture (Just leftBar) 
+                          (Just (Rectangle (P (V2 0 60)) (V2 44 60)))
+
     mapM_ (liftIO . (drawTile renderer texture))
           [(i, j, grid ! (i, j)) | i <- [0..9], j <- [0..9]]
 
@@ -159,7 +167,7 @@ main :: IO ()
 main = do
     initializeAll
     window <- createWindow "My SDL Application" 
-                            (defaultWindow { windowInitialSize = V2 600 600 })
+                            (defaultWindow { windowInitialSize = V2 688 600 })
     gen <- initStdGen
     renderer <- createRenderer window (-1) defaultRenderer
     texture <- (loadBMP "assets.bmp") >>= (createTextureFromSurface renderer)
