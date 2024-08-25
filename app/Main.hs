@@ -44,14 +44,52 @@ idk f (V2 x y) = (V2 (f x) (f y))
 -- coords in assets sheet
 covered, pressed, flagged, _qmark, _qmarkpressed, mine, blownup, _xmine :: Rectangle CInt
 covered:pressed:flagged:_qmark:_qmarkpressed:mine:blownup:_xmine:_  = 
-    map (\x -> Rectangle (P (V2 (14 + x) 195)) (V2 15 15)) [0,17..]
+    map (\x -> Rectangle (P (V2 (14 + x) 195)) (V2 16 16)) [0,17..]
 
 leftBar :: Rectangle CInt
-leftBar = Rectangle (P (V2 475 431)) (V2 11 16)
+leftBar = Rectangle (P (V2 475 431)) (V2 12 16)
+
+rightBar :: Rectangle CInt
+rightBar = Rectangle (P (V2 743 431)) (V2 8 16)
+
+leftTopBar :: Rectangle CInt
+-- 487 430
+leftTopBar = Rectangle (P (V2 475 376)) (V2 12 55)
+
+-- 750 430
+rightTopBar :: Rectangle CInt
+rightTopBar = Rectangle (P (V2 743 376)) (V2 8 55)
+
+
+midTopBar :: Rectangle CInt
+midTopBar = Rectangle (P (V2 535 376)) (V2 16 55)
+
+leftBotBar :: Rectangle CInt
+leftBotBar = Rectangle (P (V2 475 687)) (V2 12 8)
+
+rightBotBar :: Rectangle CInt
+rightBotBar = Rectangle (P (V2 743 687)) (V2 8 8)
+
+midBotBar :: Rectangle CInt
+midBotBar = Rectangle (P (V2 487 687)) (V2 16 8)
+
+segmentFrame :: Rectangle CInt
+segmentFrame = Rectangle (P (V2 491 391)) (V2 41 25)
+
+leftBarWidth, topHeight, botHeight, rightBarWidth, tileDim, allTiles, segmentHeight, segmentWidth, totalWidth :: CInt
+topHeight = 55 * 4
+botHeight = 8 * 4
+leftBarWidth = 12 * 4
+rightBarWidth = 8 * 4
+segmentHeight = 25 * 4
+segmentWidth = 41 * 4
+tileDim = 64
+allTiles = tileDim * 10
+totalWidth = leftBarWidth + allTiles + rightBarWidth
 
 numbers :: Array CInt (Rectangle CInt)
 numbers = array (0, 8) $ [(0, pressed)] ++ numbered
-    where numbered = [ (i+1, Rectangle (P (V2 (14 + (i * 17)) 212)) (V2 15 15)) 
+    where numbered = [ (i+1, Rectangle (P (V2 (14 + (i * 17)) 212)) (V2 16 16)) 
             | i <- [0..7] ]
 
 
@@ -66,17 +104,45 @@ pickTileRect (Tile _ Flagged) = flagged
 drawTile :: Renderer -> Texture -> (CInt, CInt, Tile) -> IO ()
 drawTile renderer texture (i, j, tile) = do
     copy renderer texture (Just $ pickTileRect tile) 
-                          (Just (Rectangle (P (V2 x y)) (V2 dim dim)))
-    where dim = 60
-          (x, y) = (44 + i * dim, dim + j * dim)
+                          (Just (Rectangle (P (V2 x y)) (V2 tileDim tileDim)))
+    where (x, y) = (leftBarWidth + i * tileDim, topHeight + j * tileDim)
+
+showRect :: Renderer -> Texture -> Rectangle CInt -> (CInt, CInt) -> (CInt, CInt) -> IO ()
+showRect renderer texture rect (x, y) (w, h) =
+    copy renderer texture (Just rect) 
+         (Just (Rectangle (P (V2 x y)) (V2 w h)))
+
 
 renderGrid :: Renderer -> Hrm ()
 renderGrid renderer = do
     (grid, texture) <- get
-    copy renderer texture (Just leftBar) 
-                          (Just (Rectangle (P (V2 0 0)) (V2 44 60)))
-    copy renderer texture (Just leftBar) 
-                          (Just (Rectangle (P (V2 0 60)) (V2 44 60)))
+    let showRect' rect xy wh = liftIO $ showRect renderer texture rect xy wh
+
+    -- top of frame
+    showRect' leftTopBar (0, 0) (leftBarWidth, topHeight)
+    showRect' midTopBar (leftBarWidth, 0) (allTiles, topHeight)
+    showRect' rightTopBar (leftBarWidth + allTiles, 0) $
+        (rightBarWidth, topHeight)
+
+
+    -- left and right of frame
+    showRect' leftBar (0, topHeight) (leftBarWidth, allTiles)
+    showRect' rightBar (leftBarWidth + allTiles, topHeight) $
+        (rightBarWidth, allTiles)
+
+    -- bottom of frame
+    showRect' leftBotBar (0, topHeight + allTiles) $
+        (leftBarWidth, botHeight)
+    showRect' rightBotBar (leftBarWidth + allTiles, topHeight + allTiles) $
+        (rightBarWidth, botHeight)
+
+    showRect' midBotBar (leftBarWidth, topHeight + allTiles) $
+        (allTiles, botHeight)
+    
+    -- segment frames
+    showRect' segmentFrame (60,60) (segmentWidth, segmentHeight)
+    showRect' segmentFrame (totalWidth - segmentWidth - 60,60) $
+        (segmentWidth, segmentHeight)
 
     mapM_ (liftIO . (drawTile renderer texture))
           [(i, j, grid ! (i, j)) | i <- [0..9], j <- [0..9]]
@@ -100,15 +166,15 @@ dispatch ((MouseButtonEvent me):xs)
       put (grid // [((i, j), new)], texture)
       dispatch xs
       where P (V2 x y) = mouseButtonEventPos me
-            i = CInt $ x `div` 60
-            j = CInt $ y `div` 60
+            i = ((CInt x) - leftBarWidth) `div` tileDim
+            j = ((CInt y) - topHeight) `div` tileDim
             mb = mouseButtonEventButton me
 dispatch (_:xs) = dispatch xs
 dispatch [] = pure Continue
 
 houseKeeping :: Grid -> (Bool, Grid)
 houseKeeping grid
-  | lost = (True, grid // 
+  | lost = (True, grid //
       [(ix, Tile Mine Shown) | ix <- indices grid, isMine (grid ! ix)])
   | otherwise = (False, grid // toReveal)
   where lost = any (\(Tile ti _) -> ti == BlownUp) $ elems grid
@@ -167,7 +233,11 @@ main :: IO ()
 main = do
     initializeAll
     window <- createWindow "My SDL Application" 
-                            (defaultWindow { windowInitialSize = V2 688 600 })
+                            (defaultWindow { 
+                              windowInitialSize = 
+                                  V2 totalWidth 
+                                     (topHeight + botHeight + allTiles)
+                                           })
     gen <- initStdGen
     renderer <- createRenderer window (-1) defaultRenderer
     texture <- (loadBMP "assets.bmp") >>= (createTextureFromSurface renderer)
