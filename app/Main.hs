@@ -71,7 +71,12 @@ smileFrame = Rectangle (P (V2 602 391)) (V2 26 26)
 mlt :: CInt
 mlt = 4
 
-mineCount, leftBarWidth, topHeight, botHeight, rightBarWidth, tileDim, segmentHeight, segmentWidth, totalWidth, smileWidth, smileFrameWidth, midFrame, lo, gridRows, gridCols, gridWidth, gridHeight :: CInt
+mineCount, leftBarWidth, topHeight,
+  botHeight, rightBarWidth, tileDim,
+  segmentHeight, segmentWidth, totalWidth,
+  smileWidth, smileFrameWidth, midFrame, lo,
+  gridRows, gridCols, gridWidth, gridHeight :: CInt
+
 mineCount = 25
 topHeight = 55 * 4
 botHeight = 8 * 4
@@ -97,11 +102,11 @@ numbers = array (0, 8) $ [(0, pressed)] ++ numbered
             | i <- [0..7] ]
 
 segments :: Array CInt (Rectangle CInt)
-segments = array (0, 11) $ [(0, zero), (10, negative), (11, blank)] ++
+segments = array (0, 11) $ [(0, zero_), (10, negative), (11, blank)] ++
     (zip [1..9] $ take 10 row)
     where row = [ Rectangle (P (V2 (14 + (i * 14)) 146)) (V2 13 23)
             | i <- [0..11]]
-          zero = head $ drop 9 row
+          zero_ = head $ drop 9 row
           negative = head $ drop 10 row
           blank = head $ drop 11 row
 
@@ -299,7 +304,7 @@ appLoop renderer texture st pt g = do
 
 
 genUnique :: (CInt, CInt) -> Int -> StdGen -> Set.Set CInt -> ([CInt], StdGen)
-genUnique interval n g ex = helper g ex
+genUnique interval n g exc = helper g exc
     where helper g s
             | Set.size s == n = (Set.toList s, g) -- idk how random this is :/
             | otherwise = 
@@ -307,35 +312,32 @@ genUnique interval n g ex = helper g ex
 
 makeGrid :: StdGen -> (CInt, CInt) -> (Grid,StdGen)
 makeGrid g (spi, spj) = (arr, g')
-    where choose c
+    where arr = array ((0, 0), (gc' , gr')) $
+              [((i, j), choose (i, j)) | i <- [0..gc'], j <- [0..gr']]
+          choose c
             | Set.member c mines = Tile Mine Covered
             | otherwise = Tile (Blank (neighbors c)) Covered
           mines = Set.fromList $
               [(i `mod` gridCols, i `div` gridCols) | i <- mineNumbers']
           neighbors (i, j) = 
-              sum [ if Set.member (i+oi, j+oj) mines
-                       then 1 else 0
-                | oi <- [-1..1], oj <- [-1..1]]
-          safeNumbers = [(spi+oi)+ gridCols*(spj+oj)
-            | oi <- [-1..1], oj <- [-1..1]]
+              sum [1 | oi <- [-1..1], oj <- [-1..1], 
+                     Set.member (i+oi, j+oj) mines]
+          safeNumbers =
+              [(spi+oi)+ gridCols*(spj+oj) | oi <- [-1..1], oj <- [-1..1]]
           (mineNumbers, g') = genUnique (0, gridRows * gridCols - 1)
               (fromIntegral $ mineCount + 9) g $ Set.fromList safeNumbers
           mineNumbers' = Set.toList $ (Set.fromList mineNumbers) Set.\\
               (Set.fromList safeNumbers)
           gr' = gridRows - 1
           gc' = gridCols - 1
-          arr = array ((0, 0), (gc' , gr')) $
-              [((i, j), choose (i, j)) | i <- [0..gc'], j <- [0..gr']]
 
 main :: IO ()
 main = do
     initializeAll
-    window <- createWindow "My SDL Application" 
-                            (defaultWindow { 
-                              windowInitialSize = 
-                                  V2 totalWidth 
-                                     (topHeight + botHeight + gridHeight)
-                                           })
+    window <- createWindow "My SDL Application" $
+        defaultWindow { 
+        windowInitialSize = V2 totalWidth (topHeight + botHeight + gridHeight)
+                      }
     renderer <- createRenderer window (-1) defaultRenderer
     t <- toSec <$> ticks
     gen <- initStdGen
