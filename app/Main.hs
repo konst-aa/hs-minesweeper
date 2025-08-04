@@ -12,8 +12,8 @@ import qualified Data.Set as Set
 import Foreign.C.Types
 import SDL hiding (get)
 import System.Random
+import Sprites
 
-type Hrm = StateT Grid IO
 
 data GameFlow = Quit | Continue | Restart
   deriving (Show, Eq)
@@ -29,107 +29,26 @@ data Tile = Tile TileInfo TileVisual
 
 type Grid = Array (CInt, CInt) Tile
 
--- coords in assets sheet
-covered, pressed, flagged, _qmark, _qmarkpressed, mine, blownup, _xmine :: Rectangle CInt
-covered : pressed : flagged : _qmark : _qmarkpressed : mine : blownup : _xmine : _ =
-  map (\x -> Rectangle (P (V2 (14 + x) 195)) (V2 16 16)) [0, 17 ..]
+data AppState = AppState
+  { appGrid    :: Grid
+    , appDims :: (CInt, CInt)
+    , appMineCount :: CInt
+  } deriving (Show)
 
-smiling, spressed, _surprised, glasses, dead :: Rectangle CInt
-smiling : spressed : _surprised : glasses : dead : _ =
-  map (\x -> Rectangle (P (V2 (14 + x) 170)) (V2 24 24)) [0, 25 ..]
+type App = StateT AppState IO
 
-leftBar :: Rectangle CInt
-leftBar = Rectangle (P (V2 475 431)) (V2 12 16)
+putGrid :: Grid -> App ()
+putGrid x = modify (\s -> s { appGrid = x })
 
-rightBar :: Rectangle CInt
-rightBar = Rectangle (P (V2 743 431)) (V2 8 16)
 
-leftTopBar :: Rectangle CInt
--- 487 430
-leftTopBar = Rectangle (P (V2 475 376)) (V2 12 55)
-
--- 750 430
-rightTopBar :: Rectangle CInt
-rightTopBar = Rectangle (P (V2 743 376)) (V2 8 55)
-
-midTopBar :: Rectangle CInt
-midTopBar = Rectangle (P (V2 535 376)) (V2 16 55)
-
-leftBotBar :: Rectangle CInt
-leftBotBar = Rectangle (P (V2 475 687)) (V2 12 8)
-
-rightBotBar :: Rectangle CInt
-rightBotBar = Rectangle (P (V2 743 687)) (V2 8 8)
-
-midBotBar :: Rectangle CInt
-midBotBar = Rectangle (P (V2 487 687)) (V2 16 8)
-
-segmentFrame :: Rectangle CInt
-segmentFrame = Rectangle (P (V2 491 391)) (V2 41 25)
-
-smileFrame :: Rectangle CInt
-smileFrame = Rectangle (P (V2 602 391)) (V2 26 26)
-
-mlt :: CInt
-mlt = 4
-
-mineCount,
-  leftBarWidth,
-  topHeight,
-  botHeight,
-  rightBarWidth,
-  tileDim,
-  segmentHeight,
-  segmentWidth,
-  totalWidth,
-  smileWidth,
-  smileFrameWidth,
-  midFrame,
-  lo,
-  gridRows,
-  gridCols,
-  gridWidth,
-  gridHeight ::
-    CInt
-mineCount = 25
-topHeight = 55 * 4
-botHeight = 8 * 4
-leftBarWidth = 12 * 4
-rightBarWidth = 8 * 4
-segmentHeight = 23 * mlt
-segmentWidth = 13 * mlt
-tileDim = 64
-totalWidth = leftBarWidth + gridWidth + rightBarWidth
-smileWidth = 24 * mlt
-smileFrameWidth = smileWidth + 2 * mlt
-midFrame = (totalWidth - smileFrameWidth) `div` 2
-lo = 60
+lo = 15 * pxScale
 gridRows = 10
-gridHeight = tileDim * gridRows
 gridCols = 13
+gridHeight = tileDim * gridRows
 gridWidth = tileDim * gridCols
+totalWidth = leftBarWidth + gridWidth + rightBarWidth
+midFrame = (totalWidth - smileFrameWidth) `div` 2
 
-numbers :: Array CInt (Rectangle CInt)
-numbers = array (0, 8) $ [(0, pressed)] ++ numbered
-  where
-    numbered =
-      [ (i + 1, Rectangle (P (V2 (14 + (i * 17)) 212)) (V2 16 16))
-        | i <- [0 .. 7]
-      ]
-
-segments :: Array CInt (Rectangle CInt)
-segments =
-  array (0, 11) $
-    [(0, zero_), (10, negative), (11, blank)]
-      ++ (zip [1 .. 9] $ take 10 row)
-  where
-    row =
-      [ Rectangle (P (V2 (14 + (i * 14)) 146)) (V2 13 23)
-        | i <- [0 .. 11]
-      ]
-    zero_ = head $ drop 9 row
-    negative = head $ drop 10 row
-    blank = head $ drop 11 row
 
 pickTileRect :: Tile -> Rectangle CInt
 pickTileRect (Tile _ Covered) = covered
@@ -174,9 +93,9 @@ getDigits n =
       | n > s && n < 0 = 11
       | otherwise = d
 
-drawAll :: Renderer -> Texture -> GameFlow -> GameRes -> CInt -> Hrm ()
+drawAll :: Renderer -> Texture -> GameFlow -> GameRes -> CInt -> App ()
 drawAll renderer texture flow gr t = do
-  grid <- get
+  grid <- gets appGrid
   let showRect' rect xy wh = liftIO $ showRect renderer texture rect xy wh
 
   -- top of frame
@@ -199,12 +118,12 @@ drawAll renderer texture flow gr t = do
   showRect' midBotBar (leftBarWidth, topHeight + gridHeight) $
     (gridWidth, botHeight)
 
-  let frameWidth = segmentWidth * 3 + mlt * 2
-      frameHeight = segmentHeight + mlt * 2
+  let frameWidth = segmentWidth * 3 + pxScale * 2
+      frameHeight = segmentHeight + pxScale * 2
 
   -- segment frames
   showRect' segmentFrame (lo, lo) (frameWidth, frameHeight)
-  showRect' segmentFrame (totalWidth - frameWidth - lo - mlt, lo) $
+  showRect' segmentFrame (totalWidth - frameWidth - lo - pxScale, lo) $
     (frameWidth, frameHeight)
 
   let showSeg (x, y) (h, t, o) = do
@@ -216,49 +135,50 @@ drawAll renderer texture flow gr t = do
       isFlagged (Tile _ Flagged) = True
       isFlagged _ = False
 
-  -- mlt for one pixel to the right/under the frame
-  showSeg (lo + mlt, lo + mlt) $ getDigits t
-  showSeg (totalWidth - frameWidth - lo, lo + mlt) $
-    getDigits $
-      mineCount - (CInt $ sum $ map (fromIntegral . fromEnum . isFlagged) $ elems grid)
+  -- pxScale for one pixel to the right/under the frame
+  showSeg (lo + pxScale, lo + pxScale) $ getDigits t
 
-  showRect' smileFrame (midFrame, lo) $
-    (smileFrameWidth, smileFrameWidth)
+  mineCount <- gets appMineCount
+  showSeg (totalWidth - frameWidth - lo, lo + pxScale) $
+    getDigits $
+      mineCount - (sum $ map (fromIntegral . fromEnum . isFlagged) $ elems grid)
+
+  showRect' smileFrame (midFrame, lo) (smileFrameWidth, smileFrameWidth)
 
   case (flow, gr) of
     (Restart, _) ->
-      showRect' spressed (midFrame + mlt, lo + mlt) $
+      showRect' spressed (midFrame + pxScale, lo + pxScale) $
         (smileWidth, smileWidth)
     (_, Lose) ->
-      showRect' dead (midFrame + mlt, lo + mlt) $
+      showRect' dead (midFrame + pxScale, lo + pxScale) $
         (smileWidth, smileWidth)
     (_, Win) ->
-      showRect' glasses (midFrame + mlt, lo + mlt) $
+      showRect' glasses (midFrame + pxScale, lo + pxScale) $
         (smileWidth, smileWidth)
     _ ->
-      showRect' smiling (midFrame + mlt, lo + mlt) $
+      showRect' smiling (midFrame + pxScale, lo + pxScale) $
         (smileWidth, smileWidth)
 
-  mapM_ (liftIO . (drawTile renderer texture)) $ assocs grid
+  mapM_ (liftIO . drawTile renderer texture) $ assocs grid
 
-dispatch :: [EventPayload] -> Hrm GameFlow
+dispatch :: [EventPayload] -> App GameFlow
+dispatch (QuitEvent : _) = pure Quit
 dispatch ((KeyboardEvent ke) : _)
   | keyboardEventKeyMotion ke == Pressed
-      && keysymKeycode (keyboardEventKeysym ke) == KeycodeQ = do
-      liftIO $ putStrLn "quitting"
-      pure Quit
+      && keysymKeycode (keyboardEventKeysym ke) == KeycodeEscape = pure Quit
+
 dispatch ((MouseButtonEvent me) : xs)
   | mm == Pressed
       && inRange (0, gridCols - 1) i
       && inRange (0, gridRows - 1) j = do
-      grid <- get
-      let new = case (grid ! (i, j)) of
+      grid <- gets appGrid
+      let new = case grid ! (i, j) of
             (Tile ti Covered) | mb == ButtonRight -> Tile ti Flagged
             (Tile ti Flagged) -> Tile ti Covered
             (Tile Mine Covered) | mb == ButtonLeft -> Tile BlownUp Shown
             (Tile ti Covered) | mb == ButtonLeft -> Tile ti Shown
             same -> same
-      put $ grid // [((i, j), new)]
+      putGrid $ grid // [((i, j), new)]
       dispatch xs
   | mm == Pressed
       && inRange (midFrame, midFrame + smileFrameWidth) x
@@ -283,13 +203,13 @@ houseKeeping grid
   | lost =
       ( Lose,
         grid
-          // [(ix, Tile Mine Shown) | (ix, (Tile Mine _)) <- assocs grid]
+          // [(ix, Tile Mine Shown) | (ix, Tile Mine _) <- assocs grid]
       )
   | won = (Win, grid)
   | otherwise = (Keep, grid // toReveal)
   where
     lost = any (\(Tile ti _) -> ti == BlownUp) $ elems grid
-    shown = [ix | (ix, (Tile _ Shown)) <- assocs $ grid // toReveal]
+    shown = [ix | (ix, Tile _ Shown) <- assocs $ grid // toReveal]
     won =
       all
         ( \case
@@ -299,46 +219,50 @@ houseKeeping grid
         )
         $ elems grid
     toReveal =
-      [ (ix, Tile ti Shown) | (ix, (Tile ti _)) <- assocs grid, 1 <= zeros ix
+      [ (ix, Tile ti Shown) | (ix, Tile ti _) <- assocs grid, (1 :: Integer) <= zeros ix
       ]
     zeros (i, j) =
       sum
-        [ case (grid ! (i + oi, j + oj)) of
-            Tile (Blank 0) Shown -> 1
-            _ -> 0
-          | oi <- [-1 .. 1],
-            oj <- [-1 .. 1],
-            withinGrid gridCols (i + oi),
-            withinGrid gridRows (j + oj)
-        ]
-    withinGrid b n = inRange (0, b - 1) n
+        [case grid ! (i + oi, j + oj) of
+           Tile (Blank 0) Shown -> 1
+           _ -> 0 |
+           oi <- [- 1 .. 1],
+           withinGrid gridCols (i + oi),
+           oj <- [- 1 .. 1],
+           withinGrid gridRows (j + oj)]
+    withinGrid b = inRange (0, b - 1)
 
-appLoop :: Renderer -> Texture -> CInt -> CInt -> StdGen -> Hrm ()
+appLoop :: Renderer -> Texture -> CInt -> CInt -> StdGen -> App ()
 appLoop renderer texture st pt g = do
   let self = appLoop renderer texture
 
   events <- pollEvents
   flow <- dispatch $ map eventPayload events
   t <- fromIntegral <$> ticks
-  grid <- get
+  grid <- gets appGrid
   let (gr, grid') = houseKeeping grid
   clear renderer
-  put grid'
+
+  modify (\s -> s { appGrid = grid' })
+
   drawAll renderer texture flow gr $ (pt - st) `div` 1000
   present renderer
 
+  mineCount <- gets appMineCount
+
   case (flow, gr) of
     (_, Remake ix) -> do
-      let (newGrid, g') = makeGrid g ix
+      let (newGrid, g') = makeGrid mineCount g ix
           (_, newGrid') =
             houseKeeping $
               newGrid
-                // [(ix, (Tile (Blank 0) Shown))]
-      put newGrid'
+                // [(ix, Tile (Blank 0) Shown)]
+      putGrid newGrid'
+      modify (\s -> s {appGrid = grid'})
       self st pt g'
     (Restart, _) -> do
-      let (newGrid, g') = makeGrid g (0, 0)
-      put newGrid
+      let (newGrid, g') = makeGrid mineCount g (0, 0)
+      putGrid newGrid
       liftIO $ threadDelay 200000
       t' <- fromIntegral <$> ticks -- bc of delay
       self t' t' g'
@@ -352,11 +276,11 @@ genUnique interval n g exc = helper g exc
     helper g s
       | Set.size s == n = (Set.toList s, g) -- idk how random this is :/
       | otherwise =
-          let (i, g') = (uniformR interval g)
+          let (i, g') = uniformR interval g
            in helper g' $ Set.insert i s
 
-makeGrid :: StdGen -> (CInt, CInt) -> (Grid, StdGen)
-makeGrid g (spi, spj) = (arr, g')
+makeGrid :: CInt -> StdGen -> (CInt, CInt) -> (Grid, StdGen)
+makeGrid mineCount g (spi, spj) = (arr, g')
   where
     arr =
       array ((0, 0), (gc', gr')) $
@@ -381,23 +305,30 @@ makeGrid g (spi, spj) = (arr, g')
         $ Set.fromList safeNumbers
     mineNumbers' =
       Set.toList $
-        (Set.fromList mineNumbers) Set.\\ (Set.fromList safeNumbers)
+        Set.fromList mineNumbers Set.\\ Set.fromList safeNumbers
     gr' = gridRows - 1
     gc' = gridCols - 1
+
+defaultMineCount = 10
 
 main :: IO ()
 main = do
   initializeAll
   window <-
-    createWindow "My SDL Application" $
+    createWindow "Konstantins minesweeper game" $
       defaultWindow
         { windowInitialSize = V2 totalWidth (topHeight + botHeight + gridHeight)
         }
   renderer <- createRenderer window (-1) defaultRenderer
   t <- fromIntegral <$> ticks
   gen <- initStdGen
-  texture <- (loadBMP "assets.bmp") >>= (createTextureFromSurface renderer)
-  let (grid, gen') = makeGrid gen (0, 0)
-  _ <- runStateT (appLoop renderer texture t t gen') $ grid
+  texture <- loadBMP "assets.bmp" >>= createTextureFromSurface renderer
+  let (grid, gen') = makeGrid defaultMineCount gen (0, 0)
+  _ <- runStateT (appLoop renderer texture t t gen') $ AppState {
+      appGrid=grid,
+      appDims=(9, 9),
+      appMineCount=defaultMineCount
+                                                                }
   destroyWindow window
   putStrLn "gg"
+
